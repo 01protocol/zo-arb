@@ -16,12 +16,14 @@ import { Ftx } from "./Ftx";
 import FTXRest from "ftx-api-rest";
 import Decimal from "decimal.js";
 import { PublicKey } from "@solana/web3.js";
+import { Drift } from "./Drift";
 
 export class Bot {
   private readonly log = bunyan.createLogger({ name: "zo-arb" });
   private readonly ftxClient: any;
   private readonly program: Program<Zo>;
   private ftx: Ftx;
+  private drift: Drift;
   private margin: Margin;
   private state: State;
   private zoMarket: ZoMarket;
@@ -50,6 +52,9 @@ export class Bot {
     });
 
     await this.setupAccounts();
+
+    this.drift = new Drift();
+    await this.drift.setup();
 
     await this.arb();
     // setInterval(async () => await this.arb(), 10 * 1000);

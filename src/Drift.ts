@@ -1,7 +1,7 @@
 import { Provider } from '@project-serum/anchor';
 import { Token, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
-import { 
+import {
     calculateMarkPrice,
     ClearingHouse,
     ClearingHouseUser,
@@ -33,7 +33,7 @@ export class Drift {
         const keypair = Keypair.fromSecretKey(
             Uint8Array.from(JSON.parse(privateKey))
         );
-        
+
         const wallet = new Wallet(keypair);
         const rpcAddress = process.env.RPC_ADDRESS;
         const connection = new Connection(rpcAddress);
@@ -54,7 +54,7 @@ export class Drift {
             wallet.publicKey.toString()
         );
         const userAccountExists = await this.user.exists();
-    
+
         if (!userAccountExists) {
             const depositAmount = new BN(process.env.USDC_MINIMUM).mul(QUOTE_PRECISION);
             await this.clearingHouse.initializeUserAccountAndDepositCollateral(
@@ -62,12 +62,12 @@ export class Drift {
                 usdcTokenAddress
             );
         }
-    
+
         await this.user.subscribe();
 
         const marketInfo = Markets.find(
             (market) => market.baseAssetSymbol === process.env.MARKET
-        ); 
+        );
         this.marketIndex = marketInfo.marketIndex;
 
         this.market = this.clearingHouse.getMarket(marketInfo.marketIndex);
@@ -85,23 +85,37 @@ export class Drift {
         );
     }
 
-    async placeTrade(side: PositionDirection, amount: BN, baseAssetSymbol: string, entryPrice: BN): Promise<void> {
-
-        const marketInfo = Markets.find(
-            (market) => market.baseAssetSymbol === baseAssetSymbol
-        );
-
+    async placeTrade(side: PositionDirection, amount: Decimal, entryPrice: number): Promise<void> {
+        const amount_bn = new BN(amount.mul(new Decimal(QUOTE_PRECISION.toNumber())).toNumber());
+        const entryPrice_bn = (new BN(entryPrice)).mul(QUOTE_PRECISION);
         await this.clearingHouse.openPosition(
-            side, 
-            amount,
-            marketInfo.marketIndex,
-            entryPrice
+            side,
+            amount_bn,
+            this.marketIndex,
+            entryPrice_bn
         );
     }
 
-    async getMarketPrice() {
+    getMarketPrice() {
         this.market = this.clearingHouse.getMarket(this.marketIndex);
         return convertToNumber(calculateMarkPrice(this.market), MARK_PRICE_PRECISION);
+    }
+
+    getSlippage(side: PositionDirection, amount: Decimal) {
+        let amount_bn = new BN(amount.mul(new Decimal(QUOTE_PRECISION.toNumber())).toNumber());
+        this.market = this.clearingHouse.getMarket(this.marketIndex);
+        return convertToNumber(
+            calculateTradeSlippage(
+                side,
+                amount_bn,
+                this.market
+            )[0],
+            MARK_PRICE_PRECISION
+        );
+    }
+
+    async rebalance() {
+        this.log.warn({ event: "rebalance", message: "NOT IMPLEMENTED" });
     }
 }
 

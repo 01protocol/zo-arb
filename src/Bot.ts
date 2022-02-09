@@ -4,6 +4,7 @@ import {
   createProgram,
   findAssociatedTokenAddress,
   Margin,
+  OrderType,
   State,
   Zo,
   ZO_MAINNET_STATE_KEY,
@@ -15,8 +16,11 @@ import { checkLamports } from "./utils";
 import { Ftx } from "./Ftx";
 import FTXRest from "ftx-api-rest";
 import Decimal from "decimal.js";
+import BN from 'bn.js';
 import { PublicKey } from "@solana/web3.js";
 import { Drift } from "./Drift";
+import { PositionDirection } from "@drift-labs/sdk";
+
 
 export class Bot {
   private readonly log = bunyan.createLogger({ name: "zo-arb" });
@@ -56,8 +60,7 @@ export class Bot {
     this.drift = new Drift();
     await this.drift.setup();
 
-    await this.arb();
-    // setInterval(async () => await this.arb(), 10 * 1000);
+    setInterval(async () => await this.arb(), 1 * 1000);
   }
 
   async setupAccounts(): Promise<void> {
@@ -102,9 +105,13 @@ export class Bot {
     // rebalance 01 margin
     await this.rebalanceZo();
 
+    // rebalance drift margin
+    await this.drift.rebalance();
+
+    /* 
     // fetch FTX account info
     const ftxAccountInfo = await this.ftx.getFtxAccountInfo(this.ftxClient);
-
+ 
     // check FTX balance (USD)
     const ftxBalance = ftxAccountInfo.freeCollateral;
     this.log.info({
@@ -118,7 +125,7 @@ export class Bot {
       });
       return;
     }
-
+ 
     // check FTX margin ratio
     const ftxMarginRatio = ftxAccountInfo.marginFraction;
     this.log.info({
@@ -135,9 +142,9 @@ export class Bot {
       });
       return;
     }
-
+ 
     this.ftxAccountValue = ftxAccountInfo.totalAccountValue;
-
+ 
     const ftxTotalPnlMaps = await this.ftx.getTotalPnLs(this.ftxClient);
     for (const marketKey in ftxTotalPnlMaps) {
       this.log.info({
@@ -148,7 +155,7 @@ export class Bot {
         },
       });
     }
-
+    */
     try {
       await this.arbTrade();
       return;
@@ -171,7 +178,7 @@ export class Bot {
 
     const position =
       this.margin.positions[
-        this.state.getMarketIndexBySymbol(process.env.MARKET)
+      this.state.getMarketIndexBySymbol(process.env.MARKET)
       ];
 
     if (position.coins.number > 0) {
@@ -226,10 +233,11 @@ export class Bot {
     // get 01 positions
     const position =
       this.margin.positions[
-        this.state.getMarketIndexBySymbol(process.env.MARKET)
+      this.state.getMarketIndexBySymbol(process.env.MARKET)
       ];
     this.log.info({ event: "ZoPosition", params: position });
 
+    /*
     // get FTX positions
     const ftxPosition = await this.ftx.getPosition(
       this.ftxClient,
@@ -247,32 +255,17 @@ export class Bot {
           diff: ftxSizeDiff,
         },
       });
-
+ 
       // TODO: rebalance position size difference
       // if (ftxSizeDiff.abs().gte()) {
       // }
     }
-
+    */
     // fetch prices
-    const [zoPrices, ftxPrices] = await Promise.all([
+    const [zoPrices, driftPrice] = await Promise.all([
       this.fetchZoPrices(),
-      this.fetchFtxPrices(),
+      await this.drift.getMarketPrice(),
     ]);
-
-    // calculate spread (zo - ftx)
-    // (zo price > ftx price) = (zo bid > ftx ask), then short zo, long ftx
-    // (zo price < ftx price) = (zo ask < ftx bid), then long zo, short ftx
-    const bidAskSpreadZo = zoPrices[0].minus(ftxPrices[1]).div(ftxPrices[1]);
-    const bidAskSpreadFtx = ftxPrices[0].minus(zoPrices[1]).div(ftxPrices[0]);
-    this.log.info({
-      event: "CalculatedSpread",
-      params: {
-        bidAskSpreadZo: bidAskSpreadZo.toFixed(),
-        bidAskSpreadFtx: bidAskSpreadFtx.toFixed(),
-      },
-    });
-
-    // TODO: calc slippage
 
     const maxBaseAllowed = new Decimal(process.env.MAX_BASE_ALLOWED);
     let maxBaseLeft = maxBaseAllowed.minus(position.coins.decimal.abs());
@@ -285,12 +278,55 @@ export class Bot {
         currentPositionSize: position.coins.number,
       },
     });
+    
+    // Estimate slippage
+    const longSlippage  = this.drift.getSlippage(PositionDirection.LONG , maxBaseLeft);
+    const shortSlippage = this.drift.getSlippage(PositionDirection.SHORT, maxBaseLeft);
+
+    // calculate spread (zo - drift)
+    // If zoBid >> driftPrice, then long drift, short zo
+    // If zoAsk << driftPrice, then short drift, long zo
+    const bidSpread: Decimal = zoPrices[0].minus(driftPrice + shortSlippage).div(driftPrice + shortSlippage);
+    const askSpread: Decimal = zoPrices[1].minus(driftPrice - longSlippage).div(driftPrice - longSlippage).neg();
+    this.log.info({
+      event: "CalculatedSpread",
+      params: {
+        bidSpread: bidSpread.toFixed(),
+        askSpread: askSpread.toFixed(),
+      },
+    });
 
     // if bidAskSpreadZo above trigger, then open position
-    if (bidAskSpreadZo.gt(process.env.ZO_SHORT_ENTRY_TRIGGER)) {
-      this.log.info({ event: "ShortZoLongFtx" });
-    } else if (bidAskSpreadFtx.gt(process.env.ZO_LONG_ENTRY_TRIGGER)) {
-      this.log.info({ event: "LongZoShortFtx" });
+    if (bidSpread.gt(process.env.SHORT_ENTRY_TRIGGER)) {
+      this.log.info({ event: "ShortZoLongDrift" });
+
+      const slippage = this.drift.getSlippage(PositionDirection.LONG, maxBaseLeft);
+
+      await Promise.all([
+        this.drift.placeTrade(PositionDirection.LONG, maxBaseLeft, driftPrice), // Want to long for less 
+        this.margin.placePerpOrder({
+          symbol: process.env.MARKET + '-PERP',
+          orderType: { limit: {} },
+          isLong: false,
+          price: zoPrices[0].toNumber(),
+          size: maxBaseLeft.toNumber(),
+        })
+      ]);
+    } else if (askSpread.gt(process.env.LONG_ENTRY_TRIGGER)) {
+      this.log.info({ event: "LongZoShortDrift" });
+      const slippage = this.drift.getSlippage(PositionDirection.SHORT, maxBaseLeft);
+
+      await Promise.all([
+        this.drift.placeTrade(PositionDirection.SHORT, maxBaseLeft, driftPrice),
+        this.margin.placePerpOrder({
+          symbol: process.env.MARKET + '-PERP',
+          orderType: { limit: {} },
+          isLong: true,
+          price: zoPrices[1].toNumber(),
+          size: maxBaseLeft.toNumber(),
+        })
+      ]);
+
     } else {
       this.log.info({ event: "NotTriggered" });
     }

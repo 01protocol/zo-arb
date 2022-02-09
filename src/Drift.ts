@@ -6,6 +6,7 @@ import {
     ClearingHouse,
     ClearingHouseUser,
     initialize,
+    Market,
     Markets,
     PositionDirection,
     convertToNumber,
@@ -15,108 +16,114 @@ import {
     BN
 } from '@drift-labs/sdk';
 
-import Wallet_ from "@project-serum/anchor/dist/cjs/nodewallet.js";
+import Wallet from "@project-serum/anchor/dist/cjs/nodewallet.js";
+import * as bunyan from "bunyan";
+import Decimal from "decimal.js";
 
-export const getTokenAddress = (
-    mintAddress: string,
-    userPubkey: string,
-): Promise<PublicKey> => {
-    return Token.getAssociatedTokenAddress(
-        new PublicKey(`ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`),
-        TOKEN_PROGRAM_ID,
-        new PublicKey(mintAddress),
-        new PublicKey(userPubkey)
-    );
-}
+export class Drift {
+    private readonly log = bunyan.createLogger({ name: "drift" });
+    private clearingHouse: ClearingHouse;
+    private user: ClearingHouseUser;
+    private market: Market;
+    private marketIndex: BN;
 
-export const main = async () => {
-    const Wallet = Wallet_["default"];
+    public async setup() {
+        const sdkConfig = initialize({ env: 'devnet' });
+        const privateKey = process.env.BOT_PRIVATE_KEY; // stored as an array string
+        const keypair = Keypair.fromSecretKey(
+            Uint8Array.from(JSON.parse(privateKey))
+        );
+        
+        const wallet = new Wallet(keypair);
+        const rpcAddress = process.env.RPC_ADDRESS;
+        const connection = new Connection(rpcAddress);
+        const provider = new Provider(connection, wallet, Provider.defaultOptions());
+        const clearingHousePublicKey = new PublicKey(
+            sdkConfig.CLEARING_HOUSE_PROGRAM_ID
+        );
+        this.clearingHouse = ClearingHouse.from(
+            connection,
+            provider.wallet,
+            clearingHousePublicKey
+        );
 
-    const sdkConfig = initialize({ env: 'devnet' });
+        this.user = ClearingHouseUser.from(this.clearingHouse, wallet.publicKey);
 
-    const privateKey = process.env.BOT_PRIVATE_KEY; // stored as an array string
-    const keypair = Keypair.fromSecretKey(
-        Uint8Array.from(JSON.parse(privateKey))
-    );
+        const usdcTokenAddress = await this.getTokenAddress(
+            sdkConfig.USDC_MINT_ADDRESS,
+            wallet.publicKey.toString()
+        );
+        const userAccountExists = await this.user.exists();
     
-    const wallet = new Wallet(keypair);
+        if (!userAccountExists) {
+            const depositAmount = new BN(process.env.USDC_MINIMUM).mul(QUOTE_PRECISION);
+            await this.clearingHouse.initializeUserAccountAndDepositCollateral(
+                depositAmount,
+                usdcTokenAddress
+            );
+        }
+    
+        await this.user.subscribe();
 
-    const rpcAddress = process.env.RPC_ADDRESS;
-    const connection = new Connection(rpcAddress);
+        const marketInfo = Markets.find(
+            (market) => market.baseAssetSymbol === process.env.MARKET
+        ); 
+        this.marketIndex = marketInfo.marketIndex;
 
-    const provider = new Provider(connection, wallet, Provider.defaultOptions());
+        this.market = this.clearingHouse.getMarket(marketInfo.marketIndex);
+    }
 
-    const lamportsBalance = await connection.getBalance(wallet.publicKey);
-    console.log('SOL balance:', lamportsBalance / 10 ** 9);
-
-    const usdcTokenAddress = await getTokenAddress(
-        sdkConfig.USDC_MINT_ADDRESS,
-        wallet.publicKey.toString()
-    );
-
-    const clearingHousePublicKey = new PublicKey(
-        sdkConfig.CLEARING_HOUSE_PROGRAM_ID
-    );
-    const clearingHouse = ClearingHouse.from(
-        connection,
-        provider.wallet,
-        clearingHousePublicKey
-    );
-    await clearingHouse.subscribe();
-
-    const user = ClearingHouseUser.from(clearingHouse, wallet.publicKey);
-
-    const userAccountExists = await user.exists();
-
-    if (!userAccountExists) {
-        const depositAmount = new BN(10000).mul(QUOTE_PRECISION);
-        await clearingHouse.initializeUserAccountAndDepositCollateral(
-            depositAmount,
-            await getTokenAddress(
-                usdcTokenAddress.toString(),
-                wallet.publicKey.toString()
-            )
+    getTokenAddress = (
+        mintAddress: string,
+        userPubkey: string,
+    ): Promise<PublicKey> => {
+        return Token.getAssociatedTokenAddress(
+            new PublicKey(`ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`),
+            TOKEN_PROGRAM_ID,
+            new PublicKey(mintAddress),
+            new PublicKey(userPubkey)
         );
     }
 
-    await user.subscribe();
+    async placeTrade(side: PositionDirection, amount: BN, baseAssetSymbol: string, entryPrice: BN): Promise<void> {
 
-    const solMarketInfo = Markets.find(
-        (market) => market.baseAssetSymbol === 'SOL'
-    );
+        const marketInfo = Markets.find(
+            (market) => market.baseAssetSymbol === baseAssetSymbol
+        );
 
-    const currentMarketPrice = calculateMarkPrice(
-        clearingHouse.getMarket(solMarketInfo.marketIndex),
-    );
+        await this.clearingHouse.openPosition(
+            side, 
+            amount,
+            marketInfo.marketIndex,
+            entryPrice
+        );
+    }
 
-    const formattedPrice = convertToNumber(currentMarketPrice, QUOTE_PRECISION);
+    async getMarketPrice() {
+        this.market = this.clearingHouse.getMarket(this.marketIndex);
+        return convertToNumber(calculateMarkPrice(this.market), MARK_PRICE_PRECISION);
+    }
+}
 
-    console.log(`Current Market Price is $${ formattedPrice }`);
+export interface DriftAccountInfo {
+    freeCollateral: Decimal,
+    totalAccountValue: Decimal,
+    marginFraction: Decimal,
+    positions: DriftPositionInfo[],
+}
 
-    const solMarketAccount = clearingHouse.getMarket(solMarketInfo.marketIndex);
+export interface DriftPositionInfo {
+    market: string,
+    netSize: Decimal,
+    entryPrice: Decimal,
+    realizedPnl: Decimal,
+    cost: Decimal,
+}
 
-    const slippage = convertToNumber(
-        calculateTradeSlippage(
-            PositionDirection.LONG,
-            new BN(5000).mul(QUOTE_PRECISION),
-            solMarketAccount,
-        )[0],
-        MARK_PRICE_PRECISION
-    );
-
-    console.log(`Slippage for a $5000 LONG on the SOL market would be $${ slippage }`);
-
-    await clearingHouse.openPosition(
-        PositionDirection.LONG,
-        new BN(5000).mul(QUOTE_PRECISION),
-        solMarketInfo.marketIndex,
-    );
-    console.log(`Longed $5000 worth of SOL`);
-    await clearingHouse.openPosition(
-        PositionDirection.SHORT,
-        new BN(2000).mul(QUOTE_PRECISION),
-        solMarketInfo.marketIndex,
-    );
-
-    await clearingHouse.closePosition(solMarketInfo.marketIndex);
-};
+export interface DriftMarketInfo {
+    baseAssetSymbol: string,
+    currentPrice: Decimal,
+    bestAsk: Decimal,
+    bestBid: Decimal,
+    lastUpdated: BN
+}

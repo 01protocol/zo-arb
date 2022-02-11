@@ -1,4 +1,4 @@
-# Zero One Drifting
+# 01-Arb
 
 *please use caution and burner wallets when using this experimental software*
 

@@ -26,8 +26,8 @@ For example if 01 is selling at 260 and Drift is selling at 230, it will open 01
 Quick Start
 ----
 ```
-yarn
-ts-node src/drifting-zo.ts
+npm i  # or yarn
+ts-node src/index.ts
 ```
 
 # Disclaimer

@@ -100,7 +100,7 @@ export class ZoArbClient {
     async marketLong(_unused, topAsk: number, quantity: number) {
         return await this.margin.makePlacePerpOrderIx({
             symbol: process.env.MARKET + '-PERP',
-            orderType: { fillOrKill: {} },
+            orderType: { limit: {} },
             isLong: true,
             price: topAsk * (1.01),
             size: quantity,
@@ -110,7 +110,7 @@ export class ZoArbClient {
     async marketShort(_unused, topBid: number, quantity: number) {
         return await this.margin.makePlacePerpOrderIx({
             symbol: process.env.MARKET + '-PERP',
-            orderType: { fillOrKill: {} },
+            orderType: { limit: {} },
             isLong: false,
             price: topBid * (0.99),
             size: quantity,

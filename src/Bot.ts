@@ -1,19 +1,11 @@
-import { Provider } from '@project-serum/anchor';
-import { Connection, Keypair, PublicKey } from '@solana/web3.js';
+import { Keypair } from '@solana/web3.js';
 import {
-    BN,
-    calculateMarkPrice,
-    ClearingHouse,
     initialize,
-    Markets,
     PositionDirection,
-    convertToNumber,
-    calculateTradeSlippage,
-    MARK_PRICE_PRECISION,
-    QUOTE_PRECISION,
-    DriftEnv, ClearingHouseUser,
+    DriftEnv
 } from '@drift-labs/sdk';
 import { ZoArbClient } from './zo';
+import { DriftArbClient } from './drift';
 import Wallet from "@project-serum/anchor/dist/cjs/nodewallet.js";
 import { wrapInTx } from "@drift-labs/sdk/lib/tx/utils";
 
@@ -42,7 +34,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 // RPC address, please don't use public ones.
 const RPC_ADDRESS = process.env.RPC_ADDRESS;
 
-export const main = async () => {
+export const runDiffBot = async () => {
     const sdkConfig = initialize({ env: 'mainnet-beta' as DriftEnv });
 
     // Set up the Wallet and Provider
@@ -52,104 +44,29 @@ export const main = async () => {
     );
     const wallet = new Wallet(keypair);
 
-    // Set up the Connection
-    const connection = new Connection(RPC_ADDRESS);
+    const driftArbClient = new DriftArbClient();
+    await driftArbClient.init(wallet);
 
-    // Set up the Provider
-    const provider = new Provider(connection, wallet,
-        {
-            commitment: 'confirmed',
-            skipPreflight: false,
-        });
-
-    // Set up zo
     const zoArbClient = new ZoArbClient(wallet);
     await zoArbClient.init();
 
 
-    // Set up the Drift Clearing House
-    const clearingHousePublicKey = new PublicKey(
-        sdkConfig.CLEARING_HOUSE_PROGRAM_ID
-    );
-
-    const clearingHouse = ClearingHouse.from(
-        connection,
-        provider.wallet,
-        clearingHousePublicKey
-    );
-
-    await clearingHouse.subscribe();
-
-    const solMarketInfo = Markets.find(
-        (market) => market.baseAssetSymbol === process.env.MARKET
-    );
-    const solMarketAccount = clearingHouse.getMarket(solMarketInfo.marketIndex);
-
-    // set up drift user
-    // Set up Clearing House user client
-    const user = ClearingHouseUser.from(clearingHouse, wallet.publicKey);
-    await user.subscribe();
-
-    let priceInfo = {
-        longEntry: 0,
-        shortEntry: 0
-    }
-
-    clearingHouse.eventEmitter.addListener('marketsAccountUpdate', async (d) => {
-        const formattedPrice = convertToNumber(calculateMarkPrice(d['markets'][0]), MARK_PRICE_PRECISION);
-
-        let longSlippage = convertToNumber(
-            calculateTradeSlippage(
-                PositionDirection.LONG,
-                new BN(POSITION_SIZE_USD).mul(QUOTE_PRECISION),
-                solMarketAccount
-            )[0],
-            MARK_PRICE_PRECISION
-        );
-
-        let shortSlippage = convertToNumber(
-            calculateTradeSlippage(
-                PositionDirection.SHORT,
-                new BN(POSITION_SIZE_USD).mul(QUOTE_PRECISION),
-                solMarketAccount
-            )[0],
-            MARK_PRICE_PRECISION
-        );
-
-        priceInfo.longEntry = formattedPrice * (1 + longSlippage)
-        priceInfo.shortEntry = formattedPrice * (1 - shortSlippage)
-    })
-
-    async function getCanOpenDriftShort() {
-        if (user.getPositionSide(user.getUserPosition(solMarketInfo.marketIndex)) == PositionDirection.LONG) {
-            return true
-        }
-        return (convertToNumber(user.getPositionValue(solMarketInfo.marketIndex), QUOTE_PRECISION) < MAX_POSITION_SIZE)
-    }
-
-    async function getCanOpenDriftLong() {
-        if (user.getPositionSide(user.getUserPosition(solMarketInfo.marketIndex)) == PositionDirection.SHORT) {
-            return true
-        }
-        return (convertToNumber(user.getPositionValue(solMarketInfo.marketIndex), QUOTE_PRECISION) < MAX_POSITION_SIZE)
-    }
-
-
     async function mainLoop() {
-        if (!priceInfo.shortEntry || !priceInfo.longEntry) {
+
+        if (!driftArbClient.priceInfo.shortEntry || !driftArbClient.priceInfo.longEntry) {
             return
         }
 
         const zoBid = await zoArbClient.getTopBid()
         const zoAsk = await zoArbClient.getTopAsk()
 
-        const driftShortDiff = (priceInfo.shortEntry - zoAsk) / zoAsk * 100
-        const driftLongDiff = (zoBid - priceInfo.longEntry) / priceInfo.longEntry * 100
-
+        const driftShortDiff = (driftArbClient.priceInfo.shortEntry - zoAsk) / zoAsk * 100
+        const driftLongDiff = (zoBid - driftArbClient.priceInfo.longEntry) / driftArbClient.priceInfo.longEntry * 100
+        
         console.log(`Buy Drift Sell 01 Diff: ${driftLongDiff.toFixed(4)}%. // Buy 01 Sell Drift Diff: ${driftShortDiff.toFixed(4)}%.`)
 
-        let canOpenDriftLong = await getCanOpenDriftLong()
-        let canOpenDriftShort = await getCanOpenDriftShort()
+        let canOpenDriftLong = await driftArbClient.getCanOpenLong()
+        let canOpenDriftShort = await driftArbClient.getCanOpenShort()
 
         // open drift long zo short
         // if short is maxed out, try to lower threshold to close the short open more long.
@@ -160,23 +77,22 @@ export const main = async () => {
                 return
             }
 
-            const quantity = Math.trunc(100 * POSITION_SIZE_USD / priceInfo.longEntry) / 100;
-            const usdcQuantity = quantity * priceInfo.longEntry;
+            const quantity = Math.trunc(100 * POSITION_SIZE_USD / driftArbClient.priceInfo.longEntry) / 100;
+            const usdcQuantity = quantity * driftArbClient.priceInfo.longEntry;
             console.log(`Quantity: ${quantity}, usdc: ${usdcQuantity}`);
 
             console.log("====================================================================")
             console.log(`SELL ${usdcQuantity} worth of SOL on 01 at price ~$${zoBid}`);
-            console.log(`LONG ${usdcQuantity} worth of SOL on Drift at price ~$${priceInfo.longEntry}`);
+            console.log(`LONG ${usdcQuantity} worth of SOL on Drift at price ~$${driftArbClient.priceInfo.longEntry}`);
             console.log(`Capturing ~${driftLongDiff.toFixed(4)}% profit (01 fees & slippage not included)`);
 
-            const txn = wrapInTx(await clearingHouse.getOpenPositionIx(
+            const txn = wrapInTx(await driftArbClient.getOpenPositionIx(
                 PositionDirection.LONG,
-                new BN(usdcQuantity).mul(QUOTE_PRECISION),
-                solMarketInfo.marketIndex
+                usdcQuantity,
             ));
 
-            txn.add(await zoArbClient.marketShort(POSITION_SIZE_USD, zoBid, POSITION_SIZE_USD / priceInfo.longEntry))
-            await clearingHouse.txSender.send(txn, [], clearingHouse.opts).catch(t => {
+            txn.add(await zoArbClient.marketShort(POSITION_SIZE_USD, zoBid, POSITION_SIZE_USD / driftArbClient.priceInfo.longEntry))
+            await driftArbClient.sendTx(txn, [], driftArbClient.getOpts()).catch(t => {
                 console.log("Transaction didn't go through, may due to low balance...", t)
             });
         }
@@ -191,22 +107,21 @@ export const main = async () => {
             }
 
             // zo rounds down to nearest multiple of 0.01
-            const quantity = Math.trunc(100 * POSITION_SIZE_USD / priceInfo.shortEntry) / 100;
-            const usdcQuantity = quantity * priceInfo.shortEntry;
+            const quantity = Math.trunc(100 * POSITION_SIZE_USD / driftArbClient.priceInfo.shortEntry) / 100;
+            const usdcQuantity = quantity * driftArbClient.priceInfo.shortEntry;
             console.log(`Quantity: ${quantity}, usdc: ${usdcQuantity}`);
 
             console.log("====================================================================")
-            console.log(`SELL ${usdcQuantity} worth of SOL on Drift at price ~$${priceInfo.shortEntry}`);
+            console.log(`SELL ${usdcQuantity} worth of SOL on Drift at price ~$${driftArbClient.priceInfo.shortEntry}`);
             console.log(`LONG ${usdcQuantity} worth of SOL on zo at price ~$${zoAsk}`);
             console.log(`Capturing ~${driftShortDiff.toFixed(4)}% profit (zo fees & slippage not included)`);
 
-            const txn = wrapInTx(await clearingHouse.getOpenPositionIx(
+            const txn = wrapInTx(await driftArbClient.getOpenPositionIx(
                 PositionDirection.SHORT,
-                new BN(usdcQuantity).mul(QUOTE_PRECISION),
-                solMarketInfo.marketIndex
+                usdcQuantity
             ));
-            txn.add(await zoArbClient.marketLong(POSITION_SIZE_USD, zoAsk, POSITION_SIZE_USD / priceInfo.shortEntry))
-            await clearingHouse.txSender.send(txn, [], clearingHouse.opts).catch(t => {
+            txn.add(await zoArbClient.marketLong(POSITION_SIZE_USD, zoAsk, POSITION_SIZE_USD / driftArbClient.priceInfo.shortEntry))
+            await driftArbClient.sendTx(txn, [], driftArbClient.getOpts()).catch(t => {
                 console.log("Transaction didn't go through, may due to low balance...", t)
             });
         }

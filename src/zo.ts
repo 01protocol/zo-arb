@@ -21,6 +21,7 @@ export class ZoArbClient {
     private program: Program<Zo>;
     private index: number;
     private wallet: Wallet;
+
     constructor(wallet: Wallet) {
         this.wallet = wallet;
         const opts: anchor.web3.ConnectionConfig = {
@@ -84,6 +85,30 @@ export class ZoArbClient {
     async getTopAsk() {
         let asks = await this.market.loadAsks(this.program.provider.connection);
         return asks.getL2(1)[0][0];
+    }
+
+    async getMark() {
+        const topBid = await this.getTopBid();
+        const topAsk = await this.getTopAsk();
+        return (topAsk + topBid) / 2;
+    }
+
+    async getSpread() {
+        const topBid = await this.getTopBid();
+        const topAsk = await this.getTopAsk();
+        return topAsk - topBid;
+    }
+
+    async getLongFunding() {
+        await this.state.cache.refresh();
+        const indexTwap = this.state.cache.getOracleBySymbol(process.env.MARKET).twap;
+
+        const markTwap = this.state.cache.data.marks[this.index].twap.close;
+        return (markTwap.number - indexTwap.number) / 24.0;
+    }
+
+    async getShortFunding() {
+        return -(await this.getLongFunding());
     }
 
     async getPositions() {

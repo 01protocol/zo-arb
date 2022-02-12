@@ -14,3 +14,8 @@ export async function checkLamports(
     throw new Error("Insufficient lamports");
   }
 }
+
+export function getTime(): [number, number] {
+  const now = new Date();
+  return [now.getMinutes(), now.getSeconds()];
+}

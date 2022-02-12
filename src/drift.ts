@@ -4,6 +4,7 @@ import {
     BN,
     calculateMarkPrice,
     ClearingHouse,
+    ClearingHouseAccountTypes,
     initialize,
     Markets,
     Market,
@@ -12,7 +13,9 @@ import {
     calculateTradeSlippage,
     MARK_PRICE_PRECISION,
     QUOTE_PRECISION,
-    DriftEnv, ClearingHouseUser,
+    FUNDING_PAYMENT_PRECISION,
+    DriftEnv, 
+    ClearingHouseUser,
 } from '@drift-labs/sdk';
 import { ZoArbClient } from './zo';
 import Wallet from "@project-serum/anchor/dist/cjs/nodewallet.js";
@@ -74,8 +77,8 @@ export class DriftArbClient {
             provider.wallet,
             clearingHousePublicKey
         );
-
-        await this.clearingHouse.subscribe();
+        
+        await this.clearingHouse.subscribe(["fundingRateHistoryAccount"]);
 
         const market = Markets.find(
             (market) => market.baseAssetSymbol === process.env.MARKET
@@ -93,7 +96,7 @@ export class DriftArbClient {
             longEntry: 0,
             shortEntry: 0
         }
-    
+
         this.clearingHouse.eventEmitter.addListener('marketsAccountUpdate', async (d) => {
             const formattedPrice = convertToNumber(calculateMarkPrice(d['markets'][0]), MARK_PRICE_PRECISION);
     
@@ -119,6 +122,16 @@ export class DriftArbClient {
             this.priceInfo.shortEntry = formattedPrice * (1 - shortSlippage)
         })
 
+    }
+
+    async getLongFunding() {
+        const fundingRate = this.clearingHouse.getFundingRateHistoryAccount();
+        return convertToNumber(fundingRate.head, FUNDING_PAYMENT_PRECISION);
+    }
+
+    async getShortFunding() {
+        const fundingRate = this.clearingHouse.getFundingRateHistoryAccount();
+        return convertToNumber(fundingRate.head.neg(), FUNDING_PAYMENT_PRECISION);
     }
 
     async getOpenPositionIx(positionSide: PositionDirection, positionValue: number) {

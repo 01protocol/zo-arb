@@ -57,8 +57,8 @@ export const runDiffBot = async () => {
             return
         }
 
-        const zoBid = await zoArbClient.getTopBid()
-        const zoAsk = await zoArbClient.getTopAsk()
+        const zoBid = await zoArbClient.getTopAsk()
+        const zoAsk = await zoArbClient.getTopBid()
 
         const driftShortDiff = (driftArbClient.priceInfo.shortEntry - zoAsk) / zoAsk * 100
         const driftLongDiff = (zoBid - driftArbClient.priceInfo.longEntry) / driftArbClient.priceInfo.longEntry * 100

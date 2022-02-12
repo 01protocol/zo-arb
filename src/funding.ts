@@ -8,6 +8,7 @@ import { ZoArbClient } from './zo';
 import { DriftArbClient } from './drift';
 import Wallet from "@project-serum/anchor/dist/cjs/nodewallet.js";
 import { wrapInTx } from "@drift-labs/sdk/lib/tx/utils";
+import { getTime } from './utils';
 
 
 require('dotenv').config();
@@ -34,7 +35,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 // RPC address, please don't use public ones.
 const RPC_ADDRESS = process.env.RPC_ADDRESS;
 
-export const runDiffBot = async () => {
+export const runFundingBot = async () => {
     const sdkConfig = initialize({ env: 'mainnet-beta' as DriftEnv });
 
     // Set up the Wallet and Provider
@@ -50,26 +51,41 @@ export const runDiffBot = async () => {
     const zoArbClient = new ZoArbClient(wallet);
     await zoArbClient.init();
 
-
     async function mainLoop() {
-
         if (!driftArbClient.priceInfo.shortEntry || !driftArbClient.priceInfo.longEntry) {
             return
         }
 
+        let [minutes, seconds] = getTime();
+        //if (minutes !== 59 || seconds !== 58) {
+        //    return
+        //}
+
         const zoBid = await zoArbClient.getTopBid()
         const zoAsk = await zoArbClient.getTopAsk()
 
-        const driftShortDiff = (driftArbClient.priceInfo.shortEntry - zoAsk) / zoAsk * 100
-        const driftLongDiff = (zoBid - driftArbClient.priceInfo.longEntry) / driftArbClient.priceInfo.longEntry * 100
+        // At the end of each hour, check the funding rates for each exchange.
+        // If the funding rates sum to more than the threshold * the spread, then open a position.
+        // After funding is collected, close the position.
 
-        console.log(`Buy Drift Sell 01 Diff: ${driftLongDiff.toFixed(4)}%. // Buy 01 Sell Drift Diff: ${driftShortDiff.toFixed(4)}%.`)
+        let zoLongFunding = await zoArbClient.getLongFunding()
+        let zoShortFunding = await zoArbClient.getShortFunding()
+
+        let driftLongFunding = await driftArbClient.getLongFunding()
+        let driftShortFunding = await driftArbClient.getShortFunding()
+
+        let zoSpread = zoAsk - zoBid
+        let driftSpread = driftArbClient.priceInfo.longEntry - driftArbClient.priceInfo.shortEntry
+
+        let zoShortDiff = (zoLongFunding + driftShortFunding - zoSpread - driftSpread) / (zoSpread + driftSpread) * 100
+        let zoLongDiff = (zoShortFunding + driftLongFunding - zoSpread - driftSpread) / (zoSpread + driftSpread) * 100
+
+        console.log(`driftFunding ${driftLongFunding} ${driftShortFunding}, zoFunding ${zoLongFunding} ${zoShortFunding}, zoSpread ${zoSpread}, driftSpread ${driftSpread}, zoShortDiff ${zoShortDiff}, zoLongDiff ${zoLongDiff}`)
+        console.log(`Buy Drift Sell 01 Diff: ${zoShortDiff.toFixed(4)}%. // Buy 01 Sell Drift Diff: ${zoLongDiff.toFixed(4)}%.`)
 
         let canOpenDriftLong = await driftArbClient.getCanOpenLong()
         let canOpenDriftShort = await driftArbClient.getCanOpenShort()
 
-
-
     }
-    setInterval(mainLoop, 4000)
+    setInterval(mainLoop, 500)
 }

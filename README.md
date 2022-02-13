@@ -1,4 +1,4 @@
-# Zero One Drifting
+# 01-Arb
 
 *please use caution and burner wallets when using this experimental software*
 
@@ -21,7 +21,8 @@ For example if 01 is selling at 260 and Drift is selling at 230, it will open 01
 5. Create an open orders account for the market you want to arb by placing a position on that market and closing it in the UI
 6. Copy `.env.example` to `.env`
 7. Fill in all parameters for `.env`, don't modify the last line
-8. Enjoy 
+8. Choose if you want to use the funding arb or the price differential arb by modifying [`src/index.ts`](src/index.ts)
+9. Enjoy 
 
 Quick Start
 ----

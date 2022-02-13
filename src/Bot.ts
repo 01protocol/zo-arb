@@ -1,16 +1,11 @@
-import { Keypair } from '@solana/web3.js';
-import {
-    initialize,
-    PositionDirection,
-    DriftEnv
-} from '@drift-labs/sdk';
-import { ZoArbClient } from './zo';
-import { DriftArbClient } from './drift';
+import { Keypair } from "@solana/web3.js";
+import { initialize, PositionDirection, DriftEnv } from "@drift-labs/sdk";
+import { ZoArbClient } from "./zo";
+import { DriftArbClient } from "./drift";
 import Wallet from "@project-serum/anchor/dist/cjs/nodewallet.js";
 import { wrapInTx } from "@drift-labs/sdk/lib/tx/utils";
 
-
-require('dotenv').config();
+require("dotenv").config();
 
 // % differences between markets to initiate a position.
 // higher is likely more profitable but less opportunities
@@ -35,96 +30,162 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const RPC_ADDRESS = process.env.RPC_ADDRESS;
 
 export const runDiffBot = async () => {
-    const sdkConfig = initialize({ env: 'mainnet-beta' as DriftEnv });
+  const sdkConfig = initialize({ env: "mainnet-beta" as DriftEnv });
 
-    // Set up the Wallet and Provider
-    const privateKey = PRIVATE_KEY
-    const keypair = Keypair.fromSecretKey(
-        Uint8Array.from(JSON.parse(privateKey))
-    );
-    const wallet = new Wallet(keypair);
+  // Set up the Wallet and Provider
+  const privateKey = PRIVATE_KEY;
+  const keypair = Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(privateKey))
+  );
+  const wallet = new Wallet(keypair);
 
-    const driftArbClient = new DriftArbClient();
-    await driftArbClient.init(wallet);
+  const driftArbClient = new DriftArbClient();
+  await driftArbClient.init(wallet);
 
-    const zoArbClient = new ZoArbClient(wallet);
-    await zoArbClient.init();
+  const zoArbClient = new ZoArbClient(wallet);
+  await zoArbClient.init();
 
-
-    async function mainLoop() {
-
-        if (!driftArbClient.priceInfo.shortEntry || !driftArbClient.priceInfo.longEntry) {
-            return
-        }
-
-        const zoBid = await zoArbClient.getTopAsk()
-        const zoAsk = await zoArbClient.getTopBid()
-
-        const driftShortDiff = (driftArbClient.priceInfo.shortEntry - zoAsk) / zoAsk * 100
-        const driftLongDiff = (zoBid - driftArbClient.priceInfo.longEntry) / driftArbClient.priceInfo.longEntry * 100
-        
-        console.log(`Buy Drift Sell 01 Diff: ${driftLongDiff.toFixed(4)}%. // Buy 01 Sell Drift Diff: ${driftShortDiff.toFixed(4)}%.`)
-
-        let canOpenDriftLong = await driftArbClient.getCanOpenLong()
-        let canOpenDriftShort = await driftArbClient.getCanOpenShort()
-
-        // open drift long zo short
-        // if short is maxed out, try to lower threshold to close the short open more long.
-        let driftLongThreshold = canOpenDriftShort ? THRESHOLD : (1.0 * THRESHOLD)
-        if (driftLongDiff > driftLongThreshold) {
-            if (!canOpenDriftLong) {
-                console.log(`Letting this opportunity go due to Drift long exposure is > $${MAX_POSITION_SIZE}`)
-                return
-            }
-
-            const quantity = Math.trunc(100 * POSITION_SIZE_USD / driftArbClient.priceInfo.longEntry) / 100;
-            const usdcQuantity = quantity * driftArbClient.priceInfo.longEntry;
-            console.log(`Quantity: ${quantity}, usdc: ${usdcQuantity}`);
-
-            console.log("====================================================================")
-            console.log(`SELL ${usdcQuantity} worth of SOL on 01 at price ~$${zoBid}`);
-            console.log(`LONG ${usdcQuantity} worth of SOL on Drift at price ~$${driftArbClient.priceInfo.longEntry}`);
-            console.log(`Capturing ~${driftLongDiff.toFixed(4)}% profit (01 fees & slippage not included)`);
-
-            const txn = wrapInTx(await driftArbClient.getOpenPositionIx(
-                PositionDirection.LONG,
-                usdcQuantity,
-            ));
-
-            txn.add(await zoArbClient.marketShort(POSITION_SIZE_USD, zoBid, POSITION_SIZE_USD / driftArbClient.priceInfo.longEntry))
-            await driftArbClient.sendTx(txn, [], driftArbClient.getOpts()).catch(t => {
-                console.log("Transaction didn't go through, may due to low balance...", t)
-            });
-        }
-
-        // open zo short drift long
-        // if long is maxed out, try to lower threshold to close the long by more short.
-        let driftShortThreshold = canOpenDriftLong ? THRESHOLD : (1.0 * THRESHOLD)
-        if (driftShortDiff > driftShortThreshold) {
-            if (!canOpenDriftShort) {
-                console.log(`Letting this opportunity go due to Drift short exposure is > $${MAX_POSITION_SIZE}`)
-                return
-            }
-
-            // zo rounds down to nearest multiple of 0.01
-            const quantity = Math.trunc(100 * POSITION_SIZE_USD / driftArbClient.priceInfo.shortEntry) / 100;
-            const usdcQuantity = quantity * driftArbClient.priceInfo.shortEntry;
-            console.log(`Quantity: ${quantity}, usdc: ${usdcQuantity}`);
-
-            console.log("====================================================================")
-            console.log(`SELL ${usdcQuantity} worth of SOL on Drift at price ~$${driftArbClient.priceInfo.shortEntry}`);
-            console.log(`LONG ${usdcQuantity} worth of SOL on zo at price ~$${zoAsk}`);
-            console.log(`Capturing ~${driftShortDiff.toFixed(4)}% profit (zo fees & slippage not included)`);
-
-            const txn = wrapInTx(await driftArbClient.getOpenPositionIx(
-                PositionDirection.SHORT,
-                usdcQuantity
-            ));
-            txn.add(await zoArbClient.marketLong(POSITION_SIZE_USD, zoAsk, POSITION_SIZE_USD / driftArbClient.priceInfo.shortEntry))
-            await driftArbClient.sendTx(txn, [], driftArbClient.getOpts()).catch(t => {
-                console.log("Transaction didn't go through, may due to low balance...", t)
-            });
-        }
+  async function mainLoop() {
+    if (
+      !driftArbClient.priceInfo.shortEntry ||
+      !driftArbClient.priceInfo.longEntry
+    ) {
+      return;
     }
-    setInterval(mainLoop, 4000)
-}
+
+    const zoBid = await zoArbClient.getTopAsk();
+    const zoAsk = await zoArbClient.getTopBid();
+
+    const driftShortDiff =
+      ((driftArbClient.priceInfo.shortEntry - zoAsk) / zoAsk) * 100;
+    const driftLongDiff =
+      ((zoBid - driftArbClient.priceInfo.longEntry) /
+        driftArbClient.priceInfo.longEntry) *
+      100;
+
+    console.log(
+      `Buy Drift Sell 01 Diff ${process.env.MARKET}: ${driftLongDiff.toFixed(
+        4
+      )}%. // Buy 01 Sell Drift Diff ${
+        process.env.MARKET
+      }: ${driftShortDiff.toFixed(4)}%.`
+    );
+
+    let canOpenDriftLong = await driftArbClient.getCanOpenLong();
+    let canOpenDriftShort = await driftArbClient.getCanOpenShort();
+
+    // open drift long zo short
+    // if short is maxed out, try to lower threshold to close the short open more long.
+    let driftLongThreshold = canOpenDriftShort ? THRESHOLD : 1.0 * THRESHOLD;
+    if (driftLongDiff > driftLongThreshold) {
+      if (!canOpenDriftLong) {
+        console.log(
+          `Letting this opportunity go due to Drift long exposure is > $${MAX_POSITION_SIZE}`
+        );
+        return;
+      }
+
+      const quantity =
+        Math.trunc(
+          (100 * POSITION_SIZE_USD) / driftArbClient.priceInfo.longEntry
+        ) / 100;
+      const usdcQuantity = quantity * driftArbClient.priceInfo.longEntry;
+      console.log(`Quantity: ${quantity}, usdc: ${usdcQuantity}`);
+
+      console.log(
+        "===================================================================="
+      );
+      console.log(
+        `SELL ${usdcQuantity} worth of ${process.env.MARKET} on 01 at price ~$${zoBid}`
+      );
+      console.log(
+        `LONG ${usdcQuantity} worth of ${process.env.MARKET} on Drift at price ~$${driftArbClient.priceInfo.longEntry}`
+      );
+      console.log(
+        `Capturing ~${driftLongDiff.toFixed(
+          4
+        )}% profit (01 fees & slippage not included)`
+      );
+
+      const txn = wrapInTx(
+        await driftArbClient.getOpenPositionIx(
+          PositionDirection.LONG,
+          usdcQuantity
+        )
+      );
+
+      txn.add(
+        await zoArbClient.marketShort(
+          POSITION_SIZE_USD,
+          zoBid,
+          POSITION_SIZE_USD / driftArbClient.priceInfo.longEntry
+        )
+      );
+      await driftArbClient
+        .sendTx(txn, [], driftArbClient.getOpts())
+        .catch((t) => {
+          console.log(
+            "Transaction didn't go through, may due to low balance...",
+            t
+          );
+        });
+    }
+
+    // open zo short drift long
+    // if long is maxed out, try to lower threshold to close the long by more short.
+    let driftShortThreshold = canOpenDriftLong ? THRESHOLD : 1.0 * THRESHOLD;
+    if (driftShortDiff > driftShortThreshold) {
+      if (!canOpenDriftShort) {
+        console.log(
+          `Letting this opportunity go due to Drift short exposure is > $${MAX_POSITION_SIZE}`
+        );
+        return;
+      }
+
+      // zo rounds down to nearest multiple of 0.01
+      const quantity =
+        Math.trunc(
+          (100 * POSITION_SIZE_USD) / driftArbClient.priceInfo.shortEntry
+        ) / 100;
+      const usdcQuantity = quantity * driftArbClient.priceInfo.shortEntry;
+
+      console.log(
+        "===================================================================="
+      );
+      console.log(
+        `SELL ${usdcQuantity} worth of ${process.env.MARKET} on Drift at price ~$${driftArbClient.priceInfo.shortEntry}`
+      );
+      console.log(
+        `LONG ${usdcQuantity} worth of ${process.env.MARKET} on zo at price ~$${zoAsk}`
+      );
+      console.log(
+        `Capturing ~${driftShortDiff.toFixed(
+          4
+        )}% profit (zo fees & slippage not included)`
+      );
+
+      const txn = wrapInTx(
+        await driftArbClient.getOpenPositionIx(
+          PositionDirection.SHORT,
+          usdcQuantity
+        )
+      );
+      txn.add(
+        await zoArbClient.marketLong(
+          POSITION_SIZE_USD,
+          zoAsk,
+          POSITION_SIZE_USD / driftArbClient.priceInfo.shortEntry
+        )
+      );
+      await driftArbClient
+        .sendTx(txn, [], driftArbClient.getOpts())
+        .catch((t) => {
+          console.log(
+            "Transaction didn't go through, may due to low balance...",
+            t
+          );
+        });
+    }
+  }
+  setInterval(mainLoop, 4000);
+};

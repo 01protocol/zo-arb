@@ -18,10 +18,11 @@ For example if 01 is selling at 260 and Drift is selling at 230, it will open 01
 2. Deposit USDC into Drift via UI
 3. Create new 01 Account in the same wallet via UI
 4. Deposit same amount of money into 01
-5. Create an open orders account for the market you want to arb by placing a position on that market and closing it in the UI
+5. Create an open orders account for the market you want to arb by placing a position on that market and closing it in the UI (for both 01 and Drift)
 6. Copy `.env.example` to `.env`
 7. Fill in all parameters for `.env`, don't modify the last line
-8. Enjoy 
+8. Choose if you want to use the funding arb or the price differential arb by modifying [`src/index.ts`](src/index.ts)
+9. Enjoy 
 
 Quick Start
 ----

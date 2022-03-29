@@ -110,6 +110,11 @@ export class ZoArbClient {
 
   async refresh() {
     await this.margin.refresh(false);
+    this.margin = await Margin.load(
+      this.program,
+      this.state,
+      this.state.cache
+    );
   }
 
   async getTopBid() {
@@ -258,6 +263,7 @@ export class ZoArbClient {
 
   async getCanOpenShort() {
     const position = await this.getPositions();
+    console.log(position.pCoins.number, MAX_POSITION_SIZE);
     if (
       position.isLong
     ) {
@@ -270,6 +276,7 @@ export class ZoArbClient {
 
   async getCanOpenLong() {
     const position = await this.getPositions();
+    console.log(position.pCoins.number, MAX_POSITION_SIZE);
     if (
       !position.isLong
     ) {

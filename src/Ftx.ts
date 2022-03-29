@@ -1,9 +1,21 @@
 import * as bunyan from "bunyan";
 import Decimal from "decimal.js";
 import fetch from "node-fetch";
+import { NewOrderReq, RestClient } from "ftx-api";
 
-export class Ftx {
+export class FtxArbClient {
   private readonly log = bunyan.createLogger({ name: "Ftx" });
+  private client: RestClient;
+  private market: FtxMarket;
+  private account: FtxAccountInfo;
+
+  constructor() {
+    this.client = new RestClient(process.env.FTX_KEY, process.env.FTX_SECRET, { subAccountName: process.env.FTX_SUBACCOUNT });
+  }
+
+  async init() {
+    this.market = await this.getMarket(process.env.FTX_MARKET);
+  }
 
   async getMarket(marketName: string): Promise<FtxMarket> {
     const response = await fetch(`https://ftx.com/api/markets/${marketName}`);
@@ -11,11 +23,21 @@ export class Ftx {
     return this.toFtxMarket(result);
   }
 
-  async getFtxAccountInfo(ftxClient: any): Promise<FtxAccountInfo> {
-    const data = await ftxClient.request({
-      method: "GET",
-      path: "/account",
-    });
+  async refresh(): Promise<void> {
+    this.market = await this.getMarket(process.env.FTX_MARKET);
+    return
+  }
+
+  getAsk(): Decimal {
+    return this.market.ask
+  }
+
+  getBid(): Decimal {
+    return this.market.bid
+  }
+
+  async getFtxAccountInfo(): Promise<FtxAccountInfo> {
+    const data = await this.client.getAccount();
     this.log.info({
       event: "GetAccountInfo",
       params: data,
@@ -70,12 +92,8 @@ export class Ftx {
     return data.result.totalPnl;
   }
 
-  async placeOrder(ftxClient: any, payload: PlaceOrderPayload): Promise<void> {
-    const data = await ftxClient.request({
-      method: "POST",
-      path: "/orders",
-      data: payload,
-    });
+  async placeOrder(payload: NewOrderReq): Promise<void> {
+    const data = await this.client.placeOrder(payload);
     this.log.info({
       event: "PlaceOrder",
       params: data,

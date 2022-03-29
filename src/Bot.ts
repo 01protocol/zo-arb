@@ -53,8 +53,8 @@ export const runDiffBot = async () => {
       return;
     }
 
-    const zoBid = await zoArbClient.getTopAsk();
-    const zoAsk = await zoArbClient.getTopBid();
+    const zoBid = await zoArbClient.getTopAsk(); // WAHT
+    const zoAsk = await zoArbClient.getTopBid(); // WAHT
 
     const driftShortDiff =
       ((driftArbClient.priceInfo.shortEntry - zoAsk) / zoAsk) * 100;
@@ -115,7 +115,7 @@ export const runDiffBot = async () => {
       );
 
       txn.add(
-        await zoArbClient.marketShort(
+        await zoArbClient.marketShortIx(
           POSITION_SIZE_USD,
           zoBid,
           POSITION_SIZE_USD / driftArbClient.priceInfo.longEntry
@@ -171,7 +171,7 @@ export const runDiffBot = async () => {
         )
       );
       txn.add(
-        await zoArbClient.marketLong(
+        await zoArbClient.marketLongIx(
           POSITION_SIZE_USD,
           zoAsk,
           POSITION_SIZE_USD / driftArbClient.priceInfo.shortEntry

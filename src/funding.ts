@@ -105,9 +105,9 @@ export const runFundingBot = async () => {
         let zoCloseIx: any;
 
         if (position.isLong) {
-          zoCloseIx = await zoArbClient.closeLong(zoBid);
+          zoCloseIx = await zoArbClient.closeLongIx(zoBid);
         } else {
-          zoCloseIx = await zoArbClient.closeShort(zoAsk);
+          zoCloseIx = await zoArbClient.closeShortIx(zoAsk);
         }
 
         const txn = wrapInTx(await driftArbClient.getClosePositionIx());
@@ -163,7 +163,7 @@ export const runFundingBot = async () => {
       );
 
       txn.add(
-        await zoArbClient.marketShort(
+        await zoArbClient.marketShortIx(
           POSITION_SIZE_USD,
           zoBid,
           POSITION_SIZE_USD / driftArbClient.priceInfo.longEntry
@@ -214,7 +214,7 @@ export const runFundingBot = async () => {
       );
 
       txn.add(
-        await zoArbClient.marketLong(
+        await zoArbClient.marketLongIx(
           POSITION_SIZE_USD,
           zoAsk,
           POSITION_SIZE_USD / driftArbClient.priceInfo.shortEntry

@@ -20,14 +20,21 @@ import {
   TransactionInstruction,
   Transaction,
   sendAndConfirmTransaction,
-  SignatureResult
+  SignatureResult,
+  PublicKey,
 } from "@solana/web3.js";
 import Wallet from "@project-serum/anchor/dist/cjs/nodewallet.js";
+import * as bunyan from "bunyan";
 
 require("dotenv").config();
 const MAX_POSITION_SIZE = parseFloat(process.env.MAX_POSITION_SIZE);
 
 export class ZoArbClient {
+  private readonly log = bunyan.createLogger({
+    name: "ZoArbClient",
+    level: "debug",
+    serializers: bunyan.stdSerializers,
+  });
   private margin: Margin;
   private market: ZoMarket;
   private state: State;
@@ -50,32 +57,31 @@ export class ZoArbClient {
   }
 
   async init(): Promise<void> {
-    this.state = await State.load(this.program, ZO_MAINNET_STATE_KEY);
     try {
-      this.margin = await Margin.load(
-        this.program,
-        this.state,
-        this.state.cache
-      );
-    } catch (_) {
-      console.log("Margin account does not exist, henceforth creating it", {
-        event: "createMargin",
-      });
+      this.log.info({ event: "Init" });
 
-      await this.checkLamports(this.program.provider, 0.04 * 10 ** 9);
+      this.state = await State.load(this.program, ZO_MAINNET_STATE_KEY);
 
       try {
+        this.margin = await Margin.load(
+          this.program,
+          this.state,
+          this.state.cache
+        );
+      } catch (_) {
+        this.log.info("Margin account does not exist, so creating it", {
+          event: "CreateMargin",
+        });
+
+        await this.checkLamports(this.program.provider, 0.04 * 10 ** 9);
+
         this.margin = await Margin.create(
           this.program,
           this.state,
           "confirmed"
         );
-      } catch (e) {
-        console.log({ err: e });
-        throw new Error("Failed to create margin account");
       }
-    }
-    try {
+
       this.market = await this.state.getMarketBySymbol(
         process.env.MARKET + "-PERP"
       );
@@ -83,25 +89,24 @@ export class ZoArbClient {
         process.env.MARKET + "-PERP"
       );
     } catch (e) {
-      console.log(e);
-      return;
+      this.log.error({ err: e, event: "Init" });
+      process.exit(1);
     }
-
   }
 
   async check() {
     const sym = process.env.MARKET + "-PERP";
-    if (!this.state._getMarketBySymbol[sym]) {
-      this.state._getMarketBySymbol[sym] = await ZoMarket.load(
+    if (!this.state.getMarketBySymbol[sym]) {
+      this.state.getMarketBySymbol[sym] = await ZoMarket.load(
         this.state.connection,
         this.state.getMarketKeyBySymbol(sym),
         this.state.provider.opts,
         this.state.program.programId.equals(ZERO_ONE_DEVNET_PROGRAM_ID)
           ? ZO_DEX_DEVNET_PROGRAM_ID
-          : ZO_DEX_MAINNET_PROGRAM_ID,
+          : ZO_DEX_MAINNET_PROGRAM_ID
       );
     }
-    if (this.state._getMarketBySymbol[sym] as ZoMarket) {
+    if (this.state.getMarketBySymbol[sym] as ZoMarket) {
       console.log("Yaya");
     } else {
       console.log("nono");
@@ -110,11 +115,7 @@ export class ZoArbClient {
 
   async refresh() {
     await this.margin.refresh(false);
-    this.margin = await Margin.load(
-      this.program,
-      this.state,
-      this.state.cache
-    );
+    this.margin = await Margin.load(this.program, this.state, this.state.cache);
   }
 
   async getTopBid() {
@@ -215,7 +216,6 @@ export class ZoArbClient {
   }
 
   async closeShortIx(topAsk: number) {
-
     return await this.margin.makePlacePerpOrderIx({
       symbol: process.env.MARKET + "-PERP",
       orderType: { reduceOnlyLimit: {} },
@@ -238,9 +238,9 @@ export class ZoArbClient {
 
   async send(ix) {
     /*
-    let tx = new Transaction({ 
-      recentBlockhash: (await this.program.provider.connection.getRecentBlockhash()).blockhash.toString(), 
-      feePayer: this.program.provider.wallet.publicKey 
+    let tx = new Transaction({
+      recentBlockhash: (await this.program.provider.connection.getRecentBlockhash()).blockhash.toString(),
+      feePayer: this.program.provider.wallet.publicKey
     });
     tx = tx.add(ix);
     tx = await this.program.provider.wallet.signTransaction(tx);
@@ -248,13 +248,18 @@ export class ZoArbClient {
     */
     let tx = new Transaction();
     tx = tx.add(ix);
-    return await this.program.provider.send(tx, [], { commitment: "confirmed" });
+    return await this.program.provider.send(tx, [], {
+      commitment: "confirmed",
+    });
   }
 
   async sendAndConfirmIx(ix: TransactionInstruction) {
     const sig = await this.send(ix);
-    let result = await this.program.provider.connection.confirmTransaction(sig, "confirmed");
-    return result.value.err === null
+    let result = await this.program.provider.connection.confirmTransaction(
+      sig,
+      "confirmed"
+    );
+    return result.value.err === null;
   }
 
   getSigner() {
@@ -263,27 +268,17 @@ export class ZoArbClient {
 
   async getCanOpenShort() {
     const position = await this.getPositions();
-    console.log(position.pCoins.number, MAX_POSITION_SIZE);
-    if (
-      position.isLong
-    ) {
+    if (position.isLong) {
       return true;
     }
-    return (
-      position.pCoins.number < MAX_POSITION_SIZE
-    );
+    return position.pCoins.number < MAX_POSITION_SIZE;
   }
 
   async getCanOpenLong() {
     const position = await this.getPositions();
-    console.log(position.pCoins.number, MAX_POSITION_SIZE);
-    if (
-      !position.isLong
-    ) {
+    if (!position.isLong) {
       return true;
     }
-    return (
-      -position.pCoins.number < MAX_POSITION_SIZE
-    );
+    return -position.pCoins.number < MAX_POSITION_SIZE;
   }
 }

@@ -1,11 +1,11 @@
 import { Keypair, Transaction } from "@solana/web3.js";
 import { initialize, PositionDirection, DriftEnv } from "@drift-labs/sdk";
-import { ZoArbClient } from "./zo";
-import { DriftArbClient } from "./drift";
 import Wallet from "@project-serum/anchor/dist/cjs/nodewallet.js";
 import { wrapInTx } from "@drift-labs/sdk/lib/tx/utils";
-import { getTime } from "./utils";
 import { Instruction } from "@drift-labs/sdk/node_modules/@project-serum/anchor";
+import { DriftArbClient } from "../clients/Drift";
+import { ZoArbClient } from "../clients/Zo";
+import { getTime } from "../utils";
 
 require("dotenv").config();
 

@@ -23,7 +23,7 @@ import {
   DriftEnv,
   ClearingHouseUser,
 } from "@drift-labs/sdk";
-import { ZoArbClient } from "./zo";
+import { ZoArbClient } from "./Zo";
 import Wallet from "@project-serum/anchor/dist/cjs/nodewallet.js";
 import { wrapInTx } from "@drift-labs/sdk/lib/tx/utils";
 

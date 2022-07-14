@@ -4,17 +4,29 @@ import fetch from "node-fetch";
 import { NewOrderReq, RestClient } from "ftx-api";
 
 export class FtxArbClient {
-  private readonly log = bunyan.createLogger({ name: "Ftx" });
+  private readonly log = bunyan.createLogger({
+    name: "FtxArbClient",
+    level: "debug",
+    serializers: bunyan.stdSerializers,
+  });
   private client: RestClient;
   private market: FtxMarket;
   private account: FtxAccountInfo;
 
   constructor() {
-    this.client = new RestClient(process.env.FTX_KEY, process.env.FTX_SECRET, { subAccountName: process.env.FTX_SUBACCOUNT });
+    this.client = new RestClient(process.env.FTX_KEY, process.env.FTX_SECRET, {
+      subAccountName: process.env.FTX_SUBACCOUNT,
+    });
   }
 
   async init() {
-    this.market = await this.getMarket(process.env.FTX_MARKET);
+    try {
+      this.log.info({ event: "Init" });
+      this.market = await this.getMarket(process.env.FTX_MARKET);
+    } catch (e) {
+      this.log.error({ err: e, event: "Init" });
+      process.exit(1);
+    }
   }
 
   async getMarket(marketName: string): Promise<FtxMarket> {
@@ -25,15 +37,15 @@ export class FtxArbClient {
 
   async refresh(): Promise<void> {
     this.market = await this.getMarket(process.env.FTX_MARKET);
-    return
+    return;
   }
 
   getAsk(): Decimal {
-    return this.market.ask
+    return this.market.ask;
   }
 
   getBid(): Decimal {
-    return this.market.bid
+    return this.market.bid;
   }
 
   async getFtxAccountInfo(): Promise<FtxAccountInfo> {

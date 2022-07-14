@@ -1,9 +1,9 @@
 import { Keypair } from "@solana/web3.js";
-import { initialize, PositionDirection, DriftEnv } from "@drift-labs/sdk";
-import { ZoArbClient } from "./zo";
-import { DriftArbClient } from "./drift";
+import { DriftEnv, initialize, PositionDirection } from "@drift-labs/sdk";
 import Wallet from "@project-serum/anchor/dist/cjs/nodewallet.js";
 import { wrapInTx } from "@drift-labs/sdk/lib/tx/utils";
+import { DriftArbClient } from "../clients/Drift";
+import { ZoArbClient } from "../clients/Zo";
 
 require("dotenv").config();
 
@@ -29,7 +29,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 // RPC address, please don't use public ones.
 const RPC_ADDRESS = process.env.RPC_ADDRESS;
 
-export const runDiffBot = async () => {
+export const runDriftPriceArb = async () => {
   const sdkConfig = initialize({ env: "mainnet-beta" as DriftEnv });
 
   // Set up the Wallet and Provider
